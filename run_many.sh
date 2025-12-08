@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# CONFIG: number of baseline and attack runs
 BASELINE_COUNT=${1:-70}
 ATTACK_COUNT=${2:-30}
 
-# Where to put outputs
 OUT_DIR="data/raw/audit"
 PROCESSED_DIR="data/processed"
 ALERTS_DIR="alerts"
@@ -13,13 +11,11 @@ METRICS_DIR="metrics"
 
 mkdir -p "$OUT_DIR" "$PROCESSED_DIR" "$ALERTS_DIR" "$METRICS_DIR"
 
-timestamp() {
-  date +"%Y%m%d-%H%M%S"
-}
+timestamp() { date +"%Y%m%d-%H%M%S"; }
 
 run_pipeline_once() {
-  local mode=$1   # "baseline" or "attack"
-  local seq=$2    # integer index
+  local mode=$1
+  local seq=$2
 
   local runid="$(timestamp)_${mode}_${seq}"
   local raw_out="${OUT_DIR}/${runid}.jsonl"
@@ -30,45 +26,35 @@ run_pipeline_once() {
   echo "=== START RUN: ${runid} (mode=${mode}) ==="
 
   # 1) Generate telemetry
-  echo "[${runid}] Generating telemetry: mode=${mode} -> ${raw_out}"
-  # NOTE: telemetry_generator.py must accept: --mode <mode> --out <path>
-  python3 ./telemetry_generator.py --mode "${mode}" --out "${raw_out}"
-  echo "[${runid}] Telemetry written: ${raw_out}"
+  echo "[${runid}] Generating telemetry -> ${raw_out}"
+  python3 ./telemetry_generator.py --mode "${mode}" --out "${raw_out}" || echo "[${runid}] telemetry_generator returned non-zero"
 
-  # 2) Ingest
+  # 2) Ingest (calls LLM)
   echo "[${runid}] Running ingest: in=${raw_out} out=${processed_out}"
-  # NOTE: ingest.py must accept: --in <path> --out <path>
-  python3 ./ingest.py --in "${raw_out}" --out "${processed_out}"
-  echo "[${runid}] Ingestion complete: ${processed_out}"
+  python3 ./ingest.py --in "${raw_out}" --out "${processed_out}" || echo "[${runid}] ingest returned non-zero"
 
-  # 3) Rule testing (rule_tester.py prints alerts to stdout; redirect)
+  # 3) Rule testing
   echo "[${runid}] Running rule_tester: input=${processed_out} -> ${alerts_out}"
-  # If rule_tester.py supports --input only and returns JSON to stdout:
-  python3 ./rule_tester.py --input "${processed_out}" > "${alerts_out}" || {
-    echo "[${runid}] WARNING: rule_tester returned non-zero exit; continuing"
-  }
-  echo "[${runid}] Alerts saved: ${alerts_out}"
+  python3 ./rule_tester.py --input "${processed_out}" --out "${alerts_out}" || echo "[${runid}] rule_tester returned non-zero"
 
-  # 4) Metrics
-  echo "[${runid}] Running metrics: alerts=${alerts_out} processed=${processed_out} -> ${metrics_out}"
-  # Change this line if metrics.py has a different CLI
-  if python3 ./metrics.py --alerts "${alerts_out}" --processed "${processed_out}" --out "${metrics_out}"; then
-    echo "[${runid}] Metrics written: ${metrics_out}"
-  else
-    echo "[${runid}] WARNING: metrics.py failed; trying fallback to stdout redirect"
-    python3 ./metrics.py --alerts "${alerts_out}" --processed "${processed_out}" > "${metrics_out}" || echo "[${runid}] metrics fallback failed"
-  fi
+  # 4) Metrics (write JSON)
+  echo "[${runid}] Running metrics: truth=${alerts_out} pred=${processed_out} -> ${metrics_out}"
+  python3 ./metrics.py --truth "${alerts_out}" --pred "${processed_out}" --out "${metrics_out}" || echo "[${runid}] metrics returned non-zero"
+
+  # 5) Summarize and POST to mock LLM
+  echo "[${runid}] Summarizing and posting metrics to mock LLM"
+  python3 ./summarize_run.py "${runid}" --raw "${raw_out}" --proc "${processed_out}" --out-dir "${METRICS_DIR}" --url "${METRICS_URL:-http://127.0.0.1:8080/v1/metrics}" || echo "[${runid}] summarize_run returned non-zero"
 
   echo "=== END RUN: ${runid} ==="
   echo
 }
 
-# Run baseline (1..BASELINE_COUNT)
+# Run baseline
 for i in $(seq 1 ${BASELINE_COUNT}); do
   run_pipeline_once "baseline" "${i}"
 done
 
-# Run attack (1..ATTACK_COUNT)
+# Run attacks
 for i in $(seq 1 ${ATTACK_COUNT}); do
   run_pipeline_once "attack" "${i}"
 done

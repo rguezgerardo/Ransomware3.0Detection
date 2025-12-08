@@ -10,24 +10,25 @@ def parse_args():
     p.add_argument("--run-id", default=None)
     return p.parse_args()
 
-def generate_event(i, mode):
+def generate_event(i, mode, run_id):
     ts = datetime.utcnow().isoformat() + "Z"
     if mode == "baseline":
-        return {
-            "timestamp": ts,
-            "id": i,
-            "event_type": "file_read",
-            "filename": "canary/doc1.txt",
-            "note": "baseline read"
-        }
+        etype = "file_read"
+        note = "baseline read"
     else:
-        return {
-            "timestamp": ts,
-            "id": i,
-            "event_type": "file_write",
-            "filename": "canary/doc1.txt",
-            "note": "attack write"
-        }
+        etype = "file_write"
+        note = "attack write"
+
+    # produce both 'id' and canonical 'event_id' to be robust to consumers
+    event_id = f"{run_id}-{i}"
+    return {
+        "timestamp": ts,
+        "id": i,
+        "event_id": event_id,
+        "event_type": etype,
+        "filename": "canary/doc1.txt",
+        "note": note
+    }
 
 def main():
     args = parse_args()
@@ -39,22 +40,18 @@ def main():
     if os.path.isdir(out_arg) or out_arg.endswith("/"):
         os.makedirs(out_arg, exist_ok=True)
         out_file = os.path.join(out_arg, f"{run_id}.jsonl")
-
-    # CASE 2: --out looks like a file path
     else:
         parent = os.path.dirname(out_arg)
         if parent:
             os.makedirs(parent, exist_ok=True)
         out_file = out_arg
 
-    # SAFETY CHECK
     if out_file is None:
         raise RuntimeError("Internal error: out_file was not set")
 
-    # WRITE JSONL EVENTS
     with open(out_file, "w") as f:
         for i in range(args.count):
-            evt = generate_event(i, args.mode)
+            evt = generate_event(i, args.mode, run_id)
             f.write(json.dumps(evt) + "\n")
 
     print(out_file)

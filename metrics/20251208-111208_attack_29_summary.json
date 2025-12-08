@@ -1,0 +1,9 @@
+{
+  "run_id": "20251208-111208_attack_29",
+  "file_reads": 0,
+  "file_writes": 300,
+  "llm_packets": 300,
+  "llm_total_bytes": 132160,
+  "llm_packet_rate": 34871.556433802165,
+  "timestamp": "2025-12-08T18:15:31Z"
+}
