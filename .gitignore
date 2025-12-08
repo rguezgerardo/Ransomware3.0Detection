@@ -1,15 +1,5 @@
 venv/
 
-data/raw/
-data/*.pcap
-*.audit.log
-*.log
-
-data/raw/
-data/*.pcap
-*.audit.log
-*.log
-
 __pycache__/
 *.pyc
 

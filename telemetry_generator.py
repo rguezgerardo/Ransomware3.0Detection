@@ -1,55 +1,64 @@
-"""
-Simple telemetry generator that emits JSON Lines
-Usage:
-python3 telemetry_generator.py --mode baseline --out baseline.jsonl --count 100
-python3 telemetry_generator.py --mode attack --out attack.jsonl --count 200
-"""
-import argparse, json, random, time, uuid
+#!/usr/bin/env python3
+import argparse, json, os
 from datetime import datetime
 
+def parse_args():
+    p = argparse.ArgumentParser()
+    p.add_argument("--mode", choices=["baseline", "attack"], required=True)
+    p.add_argument("--out", required=True, help="Output FILE or DIRECTORY")
+    p.add_argument("--count", type=int, default=300)
+    p.add_argument("--run-id", default=None)
+    return p.parse_args()
 
-EVENT_TYPES_BASELINE = ['process_start', 'file_open', 'net_connect', 'execve']
-EVENT_TYPES_ATTACK = EVENT_TYPES_BASELINE + ['file_encrypt','mass_write','delete_files']
+def generate_event(i, mode):
+    ts = datetime.utcnow().isoformat() + "Z"
+    if mode == "baseline":
+        return {
+            "timestamp": ts,
+            "id": i,
+            "event_type": "file_read",
+            "filename": "canary/doc1.txt",
+            "note": "baseline read"
+        }
+    else:
+        return {
+            "timestamp": ts,
+            "id": i,
+            "event_type": "file_write",
+            "filename": "canary/doc1.txt",
+            "note": "attack write"
+        }
 
+def main():
+    args = parse_args()
 
-PROCS = ['bash','python','sshd','gnome-shell','nautilus','systemd']
-FILES = ['/home/user/documents/report.docx','/home/user/pics/image1.png','/tmp/tmpfile']
+    out_arg = args.out
+    run_id = args.run_id or datetime.utcnow().strftime("%Y%m%d-%H%M%S")
 
-def now_ts():
-	return datetime.utcnow().isoformat()+'Z'
+    # CASE 1: --out is a directory ➝ create <dir>/<run-id>.jsonl
+    if os.path.isdir(out_arg) or out_arg.endswith("/"):
+        os.makedirs(out_arg, exist_ok=True)
+        out_file = os.path.join(out_arg, f"{run_id}.jsonl")
 
+    # CASE 2: --out looks like a file path
+    else:
+        parent = os.path.dirname(out_arg)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        out_file = out_arg
 
-def gen_event(mode):
-	evt = {}
-	evt['event_id'] = str(uuid.uuid4())
-	evt['timestamp'] = now_ts()
-	if mode=='baseline':
-		evt['event_type'] = random.choice(EVENT_TYPES_BASELINE)
-	else:
-		# bias towards attack events
-		evt['event_type'] = random.choices(EVENT_TYPES_ATTACK, weights=[10,10,5,8,40,20,5])[0]
-	evt['pid'] = random.randint(1000,9000)
-	evt['proc'] = random.choice(PROCS)
-	evt['path'] = random.choice(FILES)
-	# simple labels for evaluation
-	evt['label'] = 'attack' if mode=='attack' and evt['event_type'] in ['file_encrypt','mass_write','delete_files'] else 'normal'
-	return evt
+    # SAFETY CHECK
+    if out_file is None:
+        raise RuntimeError("Internal error: out_file was not set")
 
+    # WRITE JSONL EVENTS
+    with open(out_file, "w") as f:
+        for i in range(args.count):
+            evt = generate_event(i, args.mode)
+            f.write(json.dumps(evt) + "\n")
 
+    print(out_file)
 
+if __name__ == "__main__":
+    main()
 
-if __name__=='__main__':
-	p=argparse.ArgumentParser()
-	p.add_argument('--mode',choices=['baseline','attack'],required=True)
-	p.add_argument('--out',required=True)
-	p.add_argument('--count',type=int,default=200)
-	args=p.parse_args()
-
-	with open(args.out,'w') as f:
-		for _ in range(args.count):
-			e=gen_event(args.mode)
-			f.write(json.dumps(e)+"\n")
-			time.sleep(0.005)
-
-
-	print(f'Wrote {args.out}')
